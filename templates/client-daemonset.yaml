@@ -54,6 +54,9 @@ spec:
       {{- if .Values.client.dnsPolicy }}
       dnsPolicy: {{ .Values.client.dnsPolicy }}
       {{- end }}
+      {{- if .Values.client.hostNetwork }}
+      hostNetwork: {{ .Values.client.hostNetwork }}
+      {{- end }}
 
       volumes:
         - name: data
@@ -216,6 +219,7 @@ spec:
                 {{- end }}
                 {{- end }}
                 {{- end }}
+                -enable-script-checks \
                 -domain={{ .Values.global.domain }}
           volumeMounts:
             - name: data
@@ -310,6 +314,7 @@ spec:
               -secret-name="{{ template "consul.fullname" . }}-client-acl-token" \
               -k8s-namespace={{ .Release.Namespace }} \
               -init-type="client"
+            sed -i s/deny/allow/ /consul/aclconfig/acl-config.json
         volumeMounts:
           - name: aclconfig
             mountPath: /consul/aclconfig
