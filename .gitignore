@@ -4,3 +4,4 @@
 terraform.tfstate*
 terraform.tfvars
 values.dev.yaml
+consul-0.20.1+2.tgz
