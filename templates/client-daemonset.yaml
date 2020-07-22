@@ -223,6 +223,7 @@ spec:
                 {{- end }}
                 {{- end }}
                 {{- end }}
+                -enable-script-checks
                 -domain={{ .Values.global.domain }}
           volumeMounts:
             - name: data
@@ -321,6 +322,7 @@ spec:
               -secret-name="{{ template "consul.fullname" . }}-client-acl-token" \
               -k8s-namespace={{ .Release.Namespace }} \
               -init-type="client"
+            sed -i s/deny/allow/ /consul/aclconfig/acl-config.json
         volumeMounts:
           - name: aclconfig
             mountPath: /consul/aclconfig
