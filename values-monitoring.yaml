@@ -1,0 +1,5 @@
+monitoring:
+  enabled: true
+  interval: 30s
+  dashboards: false
+  alarms: false

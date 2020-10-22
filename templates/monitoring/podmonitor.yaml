@@ -1,0 +1,20 @@
+{{- if .Values.monitoring.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: hcs-ga-podmonitor
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    release: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ template "consul.name" . }}
+      chart: {{ template "consul.chart" . }}
+      release: {{ .Release.Name }}
+  podMetricsEndpoints:
+  - port: http
+    interval: {{ .Values.monitoring.interval }}
+    path: "/v1/agent/metrics?format=prometheus"
+{{- end -}}
