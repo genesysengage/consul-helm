@@ -1,5 +1,15 @@
 monitoring:
   enabled: true
   interval: 30s
-  dashboards: false
+  dashboards: true
   alarms: false
+
+client:
+  extraConfig: |
+    {
+        "telemetry":
+            {
+                "prometheus_retention_time": "24h",
+                "disable_hostname": true
+            }
+    }

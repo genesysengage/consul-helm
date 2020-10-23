@@ -2,8 +2,8 @@
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
-  name: hcs-ga-podmonitor
-  namespace: {{ .Release.Namespace | quote }}
+  name: consul-client-health
+  namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/managed-by: Helm
     release: {{ .Release.Name }}
@@ -13,8 +13,31 @@ spec:
       app: {{ template "consul.name" . }}
       chart: {{ template "consul.chart" . }}
       release: {{ .Release.Name }}
+      component: client
   podMetricsEndpoints:
   - port: http
     interval: {{ .Values.monitoring.interval }}
-    path: "/v1/agent/metrics?format=prometheus"
+    path: "/v1/agent/metrics"
+    params:
+      format:
+      - prometheus
+
+---
+{{- if .Values.monitoring.dashboards -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: consul-client-dashboard
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    k8s-sidecar-target-directory: /var/lib/grafana/dashboards/consul
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    release: {{ .Release.Name }}
+    grafana_dashboard: "1"
+data:
+  {{ .Release.Name }}-dashboard.json: |-
+{{- tpl (.Files.Get "dashboards/consul_v1.json") . | nindent 4 }}
+
+{{- end -}}
 {{- end -}}
