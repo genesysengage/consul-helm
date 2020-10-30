@@ -220,9 +220,7 @@ spec:
                 {{- end }}
                 {{- end }}
                 -enable-script-checks \
-                -domain={{ .Values.global.domain }} \
-                -prometheus_retention_time=24 \
-                -disable_hostname=true
+                -domain={{ .Values.global.domain }}
           volumeMounts:
             - name: data
               mountPath: /consul/data
