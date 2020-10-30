@@ -5,7 +5,7 @@ monitoring:
   alarms: false
 
 client:
-  extraConfig: |
+  extraConfig: |-
     {
         "telemetry":
             {
