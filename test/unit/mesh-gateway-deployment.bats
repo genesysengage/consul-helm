@@ -236,19 +236,18 @@ key2: value2' \
       --set 'connectInject.enabled=true' \
       . | tee /dev/stderr |
       yq -r '.spec.template.spec.containers[0].image' | tee /dev/stderr)
-  [ "${actual}" = "envoyproxy/envoy-alpine:v1.14.2" ]
+  [ "${actual}" = "envoyproxy/envoy-alpine:v1.14.4" ]
 }
 
-@test "meshGateway/Deployment: envoy image can be set" {
+@test "meshGateway/Deployment: setting meshGateway.imageEnvoy fails" {
   cd `chart_dir`
-  local actual=$(helm template \
+  run helm template \
       -s templates/mesh-gateway-deployment.yaml  \
       --set 'meshGateway.enabled=true' \
       --set 'connectInject.enabled=true' \
-      --set 'meshGateway.imageEnvoy=new/image' \
-      . | tee /dev/stderr |
-      yq -r '.spec.template.spec.containers[0].image' | tee /dev/stderr)
-  [ "${actual}" = "new/image" ]
+      --set 'meshGateway.imageEnvoy=new/image' .
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "meshGateway.imageEnvoy must be specified in global" ]]
 }
 
 #--------------------------------------------------------------------
@@ -293,6 +292,94 @@ key2: value2' \
       . | tee /dev/stderr |
       yq -r '.spec.template.spec.containers[0].resources.foo' | tee /dev/stderr)
   [ "${actual}" = "bar" ]
+}
+
+#--------------------------------------------------------------------
+# init container resources
+
+@test "meshGateway/Deployment: init container has default resources" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.spec.initContainers[0].resources' | tee /dev/stderr)
+
+  [ $(echo "${actual}" | yq -r '.requests.memory') = "25Mi" ]
+  [ $(echo "${actual}" | yq -r '.requests.cpu') = "50m" ]
+  [ $(echo "${actual}" | yq -r '.limits.memory') = "150Mi" ]
+  [ $(echo "${actual}" | yq -r '.limits.cpu') = "50m" ]
+}
+
+@test "meshGateway/Deployment: init container resources can be set" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'meshGateway.initCopyConsulContainer.resources.requests.memory=memory' \
+      --set 'meshGateway.initCopyConsulContainer.resources.requests.cpu=cpu' \
+      --set 'meshGateway.initCopyConsulContainer.resources.limits.memory=memory2' \
+      --set 'meshGateway.initCopyConsulContainer.resources.limits.cpu=cpu2' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.spec.initContainers[0].resources' | tee /dev/stderr)
+
+  local actual=$(echo $object | yq -r '.requests.memory' | tee /dev/stderr)
+  [ "${actual}" = "memory" ]
+
+  local actual=$(echo $object | yq -r '.requests.cpu' | tee /dev/stderr)
+  [ "${actual}" = "cpu" ]
+
+  local actual=$(echo $object | yq -r '.limits.memory' | tee /dev/stderr)
+  [ "${actual}" = "memory2" ]
+
+  local actual=$(echo $object | yq -r '.limits.cpu' | tee /dev/stderr)
+  [ "${actual}" = "cpu2" ]
+}
+
+#--------------------------------------------------------------------
+# lifecycle sidecar resources
+
+@test "meshGateway/Deployment: lifecycle sidecar has default resources" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.spec.containers[1].resources' | tee /dev/stderr)
+
+  [ $(echo "${actual}" | yq -r '.requests.memory') = "25Mi" ]
+  [ $(echo "${actual}" | yq -r '.requests.cpu') = "20m" ]
+  [ $(echo "${actual}" | yq -r '.limits.memory') = "50Mi" ]
+  [ $(echo "${actual}" | yq -r '.limits.cpu') = "20m" ]
+}
+
+@test "meshGateway/Deployment: lifecycle sidecar resources can be set" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.lifecycleSidecarContainer.resources.requests.memory=memory' \
+      --set 'global.lifecycleSidecarContainer.resources.requests.cpu=cpu' \
+      --set 'global.lifecycleSidecarContainer.resources.limits.memory=memory2' \
+      --set 'global.lifecycleSidecarContainer.resources.limits.cpu=cpu2' \
+      . | tee /dev/stderr |
+      yq -s -r '.[0].spec.template.spec.containers[1].resources' | tee /dev/stderr)
+
+  local actual=$(echo $object | yq -r '.requests.memory' | tee /dev/stderr)
+  [ "${actual}" = "memory" ]
+
+  local actual=$(echo $object | yq -r '.requests.cpu' | tee /dev/stderr)
+  [ "${actual}" = "cpu" ]
+
+  local actual=$(echo $object | yq -r '.limits.memory' | tee /dev/stderr)
+  [ "${actual}" = "memory2" ]
+
+  local actual=$(echo $object | yq -r '.limits.cpu' | tee /dev/stderr)
+  [ "${actual}" = "cpu2" ]
 }
 
 #--------------------------------------------------------------------

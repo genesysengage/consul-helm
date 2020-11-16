@@ -346,6 +346,41 @@ load _helpers
 }
 
 #--------------------------------------------------------------------
+# extraLabels
+
+@test "server/StatefulSet: no extra labels defined by default" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/server-statefulset.yaml  \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.metadata.labels | del(."app") | del(."chart") | del(."release") | del(."component") | del(."hasDNS")' | tee /dev/stderr)
+  [ "${actual}" = "{}" ]
+}
+
+@test "server/StatefulSet: extra labels can be set" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/server-statefulset.yaml  \
+      --set 'server.extraLabels.foo=bar' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.metadata.labels.foo' | tee /dev/stderr)
+  [ "${actual}" = "bar" ]
+}
+
+@test "server/StatefulSet: multiple extra labels can be set" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/server-statefulset.yaml  \
+      --set 'server.extraLabels.foo=bar' \
+      --set 'server.extraLabels.baz=qux' \
+      . | tee /dev/stderr)
+  local actualFoo=$(echo "${actual}" | yq -r '.spec.template.metadata.labels.foo' | tee /dev/stderr)
+  local actualBaz=$(echo "${actual}" | yq -r '.spec.template.metadata.labels.baz' | tee /dev/stderr)
+  [ "${actualFoo}" = "bar" ]
+  [ "${actualBaz}" = "qux" ]
+}
+
+#--------------------------------------------------------------------
 # annotations
 
 @test "server/StatefulSet: no annotations defined by default" {
@@ -353,7 +388,7 @@ load _helpers
   local actual=$(helm template \
       -s templates/server-statefulset.yaml  \
       . | tee /dev/stderr |
-      yq -r '.spec.template.metadata.annotations | del(."consul.hashicorp.com/connect-inject")' | tee /dev/stderr)
+      yq -r '.spec.template.metadata.annotations | del(."consul.hashicorp.com/connect-inject") | del(."consul.hashicorp.com/config-checksum")' | tee /dev/stderr)
   [ "${actual}" = "{}" ]
 }
 
@@ -365,6 +400,27 @@ load _helpers
       . | tee /dev/stderr |
       yq -r '.spec.template.metadata.annotations.foo' | tee /dev/stderr)
   [ "${actual}" = "bar" ]
+}
+#--------------------------------------------------------------------
+# extraConfig
+
+@test "server/StatefulSet: adds config-checksum annotation when extraConfig is blank" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/server-statefulset.yaml  \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.metadata.annotations."consul.hashicorp.com/config-checksum"' | tee /dev/stderr)
+  [ "${actual}" = ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356 ]
+}
+
+@test "server/StatefulSet: adds config-checksum annotation when extraConfig is provided" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/server-statefulset.yaml  \
+      --set 'server.extraConfig="{\"hello\": \"world\"}"' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.metadata.annotations."consul.hashicorp.com/config-checksum"' | tee /dev/stderr)
+  [ "${actual}" = 83df36fdaf1b4acb815f1764f9ff2782c520ca012511f282ba9c57a04401a239 ]
 }
 
 #--------------------------------------------------------------------
@@ -387,6 +443,37 @@ load _helpers
       . | tee /dev/stderr |
       yq '.spec.template.spec.tolerations == "foobar"' | tee /dev/stderr)
   [ "${actual}" = "true" ]
+}
+
+#--------------------------------------------------------------------
+# global.openshift.enabled
+
+@test "server/StatefulSet: setting server.disableFsGroupSecurityContext fails" {
+  cd `chart_dir`
+  run helm template \
+      -s templates/server-statefulset.yaml  \
+      --set 'server.disableFsGroupSecurityContext=true' .
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "server.disableFsGroupSecurityContext has been removed. Please use global.openshift.enabled instead." ]]
+}
+
+@test "server/StatefulSet: fsGroup is not set when global.openshift.enabled=true" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/server-statefulset.yaml  \
+      --set 'global.openshift.enabled=true' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.spec.securityContext' | tee /dev/stderr)
+  [ "${actual}" = "null" ]
+}
+
+@test "server/StatefulSet: default fsGroup security context settings fsGroup: 1000" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/server-statefulset.yaml  \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.spec.securityContext.fsGroup' | tee /dev/stderr)
+  [ "${actual}" = "1000" ]
 }
 
 #--------------------------------------------------------------------

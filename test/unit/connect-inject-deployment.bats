@@ -79,6 +79,65 @@ load _helpers
   [[ "$output" =~ "client.grpc must be true for connect injection" ]]
 }
 
+@test "connectInject/Deployment: health checks enabled by default" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-enable-health-checks-controller"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-health-checks-reconcile-period"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: health checks can be disabled" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'connectInject.healthChecks.enabled=false' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-enable-health-checks-controller"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+}
+
+@test "connectInject/Deployment: health checks reconcile period set by default when health checks are enabled" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'connectInject.healthChecks.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-health-checks-reconcile-period=1m"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: health checks reconcile period can be set" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'connectInject.healthChecks.enabled=true' \
+      --set 'connectInject.healthChecks.reconcilePeriod=10h' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-health-checks-reconcile-period=10h"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
 #--------------------------------------------------------------------
 # consul and envoy images
 
@@ -128,26 +187,52 @@ load _helpers
   [ "${actual}" = "true" ]
 }
 
-@test "connectInject/Deployment: envoy-image is not set" {
+@test "connectInject/Deployment: envoy-image can be set via global" {
   cd `chart_dir`
   local actual=$(helm template \
       -s templates/connect-inject-deployment.yaml  \
       --set 'connectInject.enabled=true' \
-      . | tee /dev/stderr |
-      yq '.spec.template.spec.containers[0].command | any(contains("-envoy-image"))' | tee /dev/stderr)
-  [ "${actual}" = "false" ]
-}
-
-@test "connectInject/Deployment: envoy-image can be set" {
-  cd `chart_dir`
-  local actual=$(helm template \
-      -s templates/connect-inject-deployment.yaml  \
-      --set 'connectInject.enabled=true' \
-      --set 'connectInject.imageEnvoy=foo' \
+      --set 'global.imageEnvoy=foo' \
       . | tee /dev/stderr |
       yq '.spec.template.spec.containers[0].command | any(contains("-envoy-image=\"foo\""))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
+
+@test "connectInject/Deployment: setting connectInject.imageEnvoy fails" {
+  cd `chart_dir`
+  run helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'connectInject.imageEnvoy=new/image' .
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "connectInject.imageEnvoy must be specified in global" ]]
+}
+
+
+#--------------------------------------------------------------------
+# extra envoy args
+
+@test "connectInject/Deployment: extra envoy args can be set via connectInject" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'connectInject.envoyExtraArgs=--foo bar --boo baz' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("-envoy-extra-args=\"--foo bar --boo baz\""))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: extra envoy args are not set by default" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("-envoy-extra-args"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+}
+
 
 #--------------------------------------------------------------------
 # cert secrets
@@ -803,6 +888,25 @@ load _helpers
   [ "${actual}" = "true" ]
 }
 
+@test "connectInject/Deployment: init container is created when global.acls.manageSystemACLs=true and healthChecks.enabled" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'connectInject.healthChecks.enabled=true' \
+      --set 'global.acls.manageSystemACLs=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[0]' | tee /dev/stderr)
+
+  local actual=$(echo $object |
+      yq -r '.name' | tee /dev/stderr)
+  [ "${actual}" = "injector-acl-init" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("consul-k8s acl-init"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
 @test "connectInject/Deployment: cross namespace policy is not added when global.acls.manageSystemACLs=false" {
   cd `chart_dir`
   local actual=$(helm template \
@@ -829,11 +933,12 @@ load _helpers
 #--------------------------------------------------------------------
 # namespaces + http address
 
-@test "connectInject/Deployment: CONSUL_HTTP_ADDR env variable not set when namespaces are disabled" {
+@test "connectInject/Deployment: CONSUL_HTTP_ADDR env variable not set when namespaces and health checks are disabled" {
   cd `chart_dir`
   local actual=$(helm template \
       -s templates/connect-inject-deployment.yaml \
       --set 'connectInject.enabled=true' \
+      --set 'connectInject.healthChecks.enabled=false' \
       . | tee /dev/stderr |
       yq '[.spec.template.spec.containers[0].env[].name] | any(contains("CONSUL_HTTP_ADDR"))' | tee /dev/stderr)
   [ "${actual}" = "false" ]
@@ -869,14 +974,37 @@ load _helpers
   [ "${actual}" = "true" ]
 }
 
-#--------------------------------------------------------------------
-# namespaces + host ip
-
-@test "connectInject/Deployment: HOST_IP env variable not set when namespaces are disabled" {
+@test "connectInject/Deployment: CONSUL_HTTP_ADDR env variable not set when health checks are disabled" {
   cd `chart_dir`
   local actual=$(helm template \
       -s templates/connect-inject-deployment.yaml \
       --set 'connectInject.enabled=true' \
+      --set 'connectInject.healthChecks.enabled=false' \
+      . | tee /dev/stderr |
+      yq '[.spec.template.spec.containers[0].env[].name] | any(contains("CONSUL_HTTP_ADDR"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+}
+
+@test "connectInject/Deployment: CONSUL_HTTP_ADDR env variable set when health checks are enabled" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'connectInject.healthChecks.enabled=true' \
+      . | tee /dev/stderr |
+      yq '[.spec.template.spec.containers[0].env[].name] | any(contains("CONSUL_HTTP_ADDR"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+#--------------------------------------------------------------------
+# namespaces + host ip
+
+@test "connectInject/Deployment: HOST_IP env variable not set when namespaces and health checks are disabled" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'connectInject.healthChecks.enabled=false' \
       . | tee /dev/stderr |
       yq '[.spec.template.spec.containers[0].env[].name] | any(contains("HOST_IP"))' | tee /dev/stderr)
   [ "${actual}" = "false" ]
@@ -918,6 +1046,288 @@ load _helpers
       . | tee /dev/stderr |
       yq -rc '.spec.template.spec.containers[0].resources' | tee /dev/stderr)
   [ "${actual}" = '{"limits":{"cpu":"200m","memory":"200Mi"},"requests":{"cpu":"100m","memory":"100Mi"}}' ]
+}
+
+#--------------------------------------------------------------------
+# init container resources
+
+@test "connectInject/Deployment: default init container resources" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-memory-request=25Mi"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-cpu-request=50m"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-memory-limit=150Mi"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-cpu-limit=50m"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: can set init container resources" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'connectInject.initContainer.resources.requests.memory=100Mi' \
+      --set 'connectInject.initContainer.resources.requests.cpu=100m' \
+      --set 'connectInject.initContainer.resources.limits.memory=200Mi' \
+      --set 'connectInject.initContainer.resources.limits.cpu=200m' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-memory-request=100Mi"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-cpu-request=100m"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-memory-limit=200Mi"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-cpu-limit=200m"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: init container resources can be set explicitly to 0" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'connectInject.initContainer.resources.requests.memory=0' \
+      --set 'connectInject.initContainer.resources.requests.cpu=0' \
+      --set 'connectInject.initContainer.resources.limits.memory=0' \
+      --set 'connectInject.initContainer.resources.limits.cpu=0' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-memory-request=0"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-cpu-request=0"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-memory-limit=0"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-cpu-limit=0"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: init container resources can be individually set to null" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'connectInject.initContainer.resources.requests.memory=null' \
+      --set 'connectInject.initContainer.resources.requests.cpu=null' \
+      --set 'connectInject.initContainer.resources.limits.memory=null' \
+      --set 'connectInject.initContainer.resources.limits.cpu=null' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-memory-request"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-cpu-request"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-memory-limit"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-cpu-limit"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+}
+
+@test "connectInject/Deployment: init container resources can be set to null" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'connectInject.initContainer.resources=null' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-memory-request"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-cpu-request"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-memory-limit"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-init-container-cpu-limit"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+}
+
+#--------------------------------------------------------------------
+# lifecycle sidecar resources
+
+@test "connectInject/Deployment: default lifecycle sidecar container resources" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-memory-request=25Mi"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-cpu-request=20m"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-memory-limit=50Mi"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-cpu-limit=20m"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: lifecycle sidecar container resources can be set" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'global.lifecycleSidecarContainer.resources.requests.memory=100Mi' \
+      --set 'global.lifecycleSidecarContainer.resources.requests.cpu=100m' \
+      --set 'global.lifecycleSidecarContainer.resources.limits.memory=200Mi' \
+      --set 'global.lifecycleSidecarContainer.resources.limits.cpu=200m' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-memory-request=100Mi"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-cpu-request=100m"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-memory-limit=200Mi"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-cpu-limit=200m"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: lifecycle sidecar container resources can be set explicitly to 0" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'global.lifecycleSidecarContainer.resources.requests.memory=0' \
+      --set 'global.lifecycleSidecarContainer.resources.requests.cpu=0' \
+      --set 'global.lifecycleSidecarContainer.resources.limits.memory=0' \
+      --set 'global.lifecycleSidecarContainer.resources.limits.cpu=0' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-memory-request=0"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-cpu-request=0"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-memory-limit=0"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-cpu-limit=0"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: lifecycle sidecar container resources can be individually set to null" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'global.lifecycleSidecarContainer.resources.requests.memory=null' \
+      --set 'global.lifecycleSidecarContainer.resources.requests.cpu=null' \
+      --set 'global.lifecycleSidecarContainer.resources.limits.memory=null' \
+      --set 'global.lifecycleSidecarContainer.resources.limits.cpu=null' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-memory-request"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-cpu-request"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-memory-limit"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-cpu-limit"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+}
+
+@test "connectInject/Deployment: lifecycle sidecar container resources can be set to null" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'global.lifecycleSidecarContainer.resources=null' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-memory-request"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-cpu-request"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-memory-limit"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-lifecycle-sidecar-cpu-limit"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
 }
 
 #--------------------------------------------------------------------
@@ -1004,4 +1414,30 @@ load _helpers
   local actual=$(echo "$cmd" |
     yq 'any(contains("-default-sidecar-proxy-cpu-limit=0"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
+}
+
+#--------------------------------------------------------------------
+# priorityClassName
+
+@test "connectInject/Deployment: no priorityClassName by default" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.spec.priorityClassName' | tee /dev/stderr)
+
+  [ "${actual}" = "null" ]
+}
+
+@test "connectInject/Deployment: can set a priorityClassName" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'connectInject.priorityClassName=name' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.spec.priorityClassName' | tee /dev/stderr)
+
+  [ "${actual}" = "name" ]
 }

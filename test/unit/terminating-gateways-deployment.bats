@@ -83,7 +83,7 @@ load _helpers
       --set 'connectInject.enabled=true' \
       . | tee /dev/stderr |
       yq -s -r '.[0].spec.template.spec.containers[0].image' | tee /dev/stderr)
-  [ "${actual}" = "envoyproxy/envoy-alpine:v1.14.2" ]
+  [ "${actual}" = "envoyproxy/envoy-alpine:v1.14.4" ]
 }
 
 @test "terminatingGateways/Deployment: envoy image can be set using the global value" {
@@ -504,6 +504,139 @@ load _helpers
 
   local actual=$(echo $object | yq -r '.limits.cpu' | tee /dev/stderr)
   [ "${actual}" = "gwcpu2" ]
+}
+
+#--------------------------------------------------------------------
+# init container resources
+
+@test "terminatingGateways/Deployment: init container has default resources" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/terminating-gateways-deployment.yaml  \
+      --set 'terminatingGateways.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq -s -r '.[0].spec.template.spec.initContainers[0].resources' | tee /dev/stderr)
+
+  local actual=$(echo $object | yq -r '.requests.memory' | tee /dev/stderr)
+  [ "${actual}" = "25Mi" ]
+
+  local actual=$(echo $object | yq -r '.requests.cpu' | tee /dev/stderr)
+  [ "${actual}" = "50m" ]
+
+  local actual=$(echo $object | yq -r '.limits.memory' | tee /dev/stderr)
+  [ "${actual}" = "150Mi" ]
+
+  local actual=$(echo $object | yq -r '.limits.cpu' | tee /dev/stderr)
+  [ "${actual}" = "50m" ]
+}
+
+@test "terminatingGateways/Deployment: init container resources can be set through defaults" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/terminating-gateways-deployment.yaml \
+      --set 'terminatingGateways.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'terminatingGateways.defaults.initCopyConsulContainer.resources.requests.memory=memory' \
+      --set 'terminatingGateways.defaults.initCopyConsulContainer.resources.requests.cpu=cpu' \
+      --set 'terminatingGateways.defaults.initCopyConsulContainer.resources.limits.memory=memory2' \
+      --set 'terminatingGateways.defaults.initCopyConsulContainer.resources.limits.cpu=cpu2' \
+      . | tee /dev/stderr |
+      yq -s -r '.[0].spec.template.spec.initContainers[0].resources' | tee /dev/stderr)
+
+  local actual=$(echo $object | yq -r '.requests.memory' | tee /dev/stderr)
+  [ "${actual}" = "memory" ]
+
+  local actual=$(echo $object | yq -r '.requests.cpu' | tee /dev/stderr)
+  [ "${actual}" = "cpu" ]
+
+  local actual=$(echo $object | yq -r '.limits.memory' | tee /dev/stderr)
+  [ "${actual}" = "memory2" ]
+
+  local actual=$(echo $object | yq -r '.limits.cpu' | tee /dev/stderr)
+  [ "${actual}" = "cpu2" ]
+}
+
+@test "terminatingGateways/Deployment: init container resources can be set through specific gateway, overriding defaults" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/terminating-gateways-deployment.yaml \
+      --set 'terminatingGateways.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'terminatingGateways.defaults.initCopyConsulContainer.resources.requests.memory=memory' \
+      --set 'terminatingGateways.defaults.initCopyConsulContainer.resources.requests.cpu=cpu' \
+      --set 'terminatingGateways.defaults.initCopyConsulContainer.resources.limits.memory=memory2' \
+      --set 'terminatingGateways.defaults.initCopyConsulContainer.resources.limits.cpu=cpu2' \
+      --set 'terminatingGateways.gateways[0].name=gateway1' \
+      --set 'terminatingGateways.gateways[0].initCopyConsulContainer.resources.requests.memory=gwmemory' \
+      --set 'terminatingGateways.gateways[0].initCopyConsulContainer.resources.requests.cpu=gwcpu' \
+      --set 'terminatingGateways.gateways[0].initCopyConsulContainer.resources.limits.memory=gwmemory2' \
+      --set 'terminatingGateways.gateways[0].initCopyConsulContainer.resources.limits.cpu=gwcpu2' \
+      . | tee /dev/stderr |
+      yq -s '.[0].spec.template.spec.initContainers[0].resources' | tee /dev/stderr)
+
+  local actual=$(echo $object | yq -r '.requests.memory' | tee /dev/stderr)
+  [ "${actual}" = "gwmemory" ]
+
+  local actual=$(echo $object | yq -r '.requests.cpu' | tee /dev/stderr)
+  [ "${actual}" = "gwcpu" ]
+
+  local actual=$(echo $object | yq -r '.limits.memory' | tee /dev/stderr)
+  [ "${actual}" = "gwmemory2" ]
+
+  local actual=$(echo $object | yq -r '.limits.cpu' | tee /dev/stderr)
+  [ "${actual}" = "gwcpu2" ]
+}
+
+#--------------------------------------------------------------------
+# lifecycle sidecar resources
+
+@test "terminatingGateways/Deployment: lifecycle sidecar has default resources" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/terminating-gateways-deployment.yaml  \
+      --set 'terminatingGateways.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq -s -r '.[0].spec.template.spec.containers[1].resources' | tee /dev/stderr)
+
+  local actual=$(echo $object | yq -r '.requests.memory' | tee /dev/stderr)
+  [ "${actual}" = "25Mi" ]
+
+  local actual=$(echo $object | yq -r '.requests.cpu' | tee /dev/stderr)
+  [ "${actual}" = "20m" ]
+
+  local actual=$(echo $object | yq -r '.limits.memory' | tee /dev/stderr)
+  [ "${actual}" = "50Mi" ]
+
+  local actual=$(echo $object | yq -r '.limits.cpu' | tee /dev/stderr)
+  [ "${actual}" = "20m" ]
+}
+
+@test "terminatingGateways/Deployment: lifecycle sidecar resources can be set" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/terminating-gateways-deployment.yaml \
+      --set 'terminatingGateways.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.lifecycleSidecarContainer.resources.requests.memory=memory' \
+      --set 'global.lifecycleSidecarContainer.resources.requests.cpu=cpu' \
+      --set 'global.lifecycleSidecarContainer.resources.limits.memory=memory2' \
+      --set 'global.lifecycleSidecarContainer.resources.limits.cpu=cpu2' \
+      . | tee /dev/stderr |
+      yq -s -r '.[0].spec.template.spec.containers[1].resources' | tee /dev/stderr)
+
+  local actual=$(echo $object | yq -r '.requests.memory' | tee /dev/stderr)
+  [ "${actual}" = "memory" ]
+
+  local actual=$(echo $object | yq -r '.requests.cpu' | tee /dev/stderr)
+  [ "${actual}" = "cpu" ]
+
+  local actual=$(echo $object | yq -r '.limits.memory' | tee /dev/stderr)
+  [ "${actual}" = "memory2" ]
+
+  local actual=$(echo $object | yq -r '.limits.cpu' | tee /dev/stderr)
+  [ "${actual}" = "cpu2" ]
 }
 
 #--------------------------------------------------------------------
