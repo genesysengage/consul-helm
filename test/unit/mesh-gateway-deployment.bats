@@ -236,7 +236,7 @@ key2: value2' \
       --set 'connectInject.enabled=true' \
       . | tee /dev/stderr |
       yq -r '.spec.template.spec.containers[0].image' | tee /dev/stderr)
-  [ "${actual}" = "envoyproxy/envoy-alpine:v1.14.4" ]
+  [ "${actual}" = "envoyproxy/envoy-alpine:v1.16.0" ]
 }
 
 @test "meshGateway/Deployment: setting meshGateway.imageEnvoy fails" {
@@ -621,6 +621,18 @@ key2: value2' \
   # check that the volume uses the provided secret key
   actual=$(echo $ca_cert_volume | jq -r '.secret.items[0].key' | tee /dev/stderr)
   [ "${actual}" = "key" ]
+}
+
+@test "meshGateway/Deployment: CA cert volume present when TLS is enabled" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.volumes[] | select(.name == "consul-ca-cert")' | tee /dev/stderr)
+  [ "${actual}" != "" ]
 }
 
 #--------------------------------------------------------------------

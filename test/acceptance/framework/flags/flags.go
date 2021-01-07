@@ -24,12 +24,16 @@ type TestFlags struct {
 
 	flagEnableOpenshift bool
 
+	flagEnablePodSecurityPolicies bool
+
 	flagConsulImage    string
 	flagConsulK8sImage string
 
 	flagNoCleanupOnFailure bool
 
 	flagDebugDirectory string
+
+	flagUseKind bool
 
 	once sync.Once
 }
@@ -71,12 +75,18 @@ func (t *TestFlags) init() {
 	flag.BoolVar(&t.flagEnableOpenshift, "enable-openshift", false,
 		"If true, the tests will automatically add Openshift Helm value for each Helm install.")
 
+	flag.BoolVar(&t.flagEnablePodSecurityPolicies, "enable-pod-security-policies", false,
+		"If true, the test suite will run tests with pod security policies enabled.")
+
 	flag.BoolVar(&t.flagNoCleanupOnFailure, "no-cleanup-on-failure", false,
 		"If true, the tests will not cleanup Kubernetes resources they create when they finish running."+
 			"Note this flag must be run with -failfast flag, otherwise subsequent tests will fail.")
 
 	flag.StringVar(&t.flagDebugDirectory, "debug-directory", "", "The directory where to write debug information about failed test runs, "+
 		"such as logs and pod definitions. If not provided, a temporary directory will be created by the tests.")
+
+	flag.BoolVar(&t.flagUseKind, "use-kind", false,
+		"If true, the tests will assume they are running against a local kind cluster(s).")
 }
 
 func (t *TestFlags) Validate() error {
@@ -114,10 +124,13 @@ func (t *TestFlags) TestConfigFromFlags() *config.TestConfig {
 
 		EnableOpenshift: t.flagEnableOpenshift,
 
+		EnablePodSecurityPolicies: t.flagEnablePodSecurityPolicies,
+
 		ConsulImage:    t.flagConsulImage,
 		ConsulK8SImage: t.flagConsulK8sImage,
 
 		NoCleanupOnFailure: t.flagNoCleanupOnFailure,
 		DebugDirectory:     tempDir,
+		UseKind:            t.flagUseKind,
 	}
 }

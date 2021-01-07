@@ -41,6 +41,11 @@ func TestMeshGatewayDefault(t *testing.T) {
 		"meshGateway.replicas": "1",
 	}
 
+	if cfg.UseKind {
+		primaryHelmValues["meshGateway.service.type"] = "NodePort"
+		primaryHelmValues["meshGateway.service.nodePort"] = "30000"
+	}
+
 	releaseName := helpers.RandomName()
 
 	// Install the primary consul cluster in the default kubernetes context
@@ -75,10 +80,20 @@ func TestMeshGatewayDefault(t *testing.T) {
 		"server.extraVolumes[0].items[0].key":  "serverConfigJSON",
 		"server.extraVolumes[0].items[0].path": "config.json",
 
+		// Enterprise license job will fail if it runs in the secondary DC,
+		// so we're explicitly setting these values to empty to avoid that.
+		"server.enterpriseLicense.secretName": "",
+		"server.enterpriseLicense.secretKey":  "",
+
 		"connectInject.enabled": "true",
 
 		"meshGateway.enabled":  "true",
 		"meshGateway.replicas": "1",
+	}
+
+	if cfg.UseKind {
+		secondaryHelmValues["meshGateway.service.type"] = "NodePort"
+		secondaryHelmValues["meshGateway.service.nodePort"] = "30000"
 	}
 
 	// Install the secondary consul cluster in the secondary kubernetes context
@@ -90,7 +105,18 @@ func TestMeshGatewayDefault(t *testing.T) {
 
 	// Verify federation between servers
 	logger.Log(t, "verifying federation was successful")
-	verifyFederation(t, primaryClient, secondaryClient, false)
+	verifyFederation(t, primaryClient, secondaryClient, releaseName, false)
+
+	// Log services in DC2 that DC1 is aware of before exiting this test
+	// TODO: remove this code once issue has been debugged
+	defer func() {
+		svcs, _, err := primaryClient.Catalog().Services(&api.QueryOptions{Datacenter: "dc2"})
+		if err != nil {
+			logger.Logf(t, "error calling primary on /v1/catalog/services?dc=dc2: %s\n", err.Error())
+			return
+		}
+		logger.Logf(t, "primary on /v1/catalog/services?dc=dc2: %+v\n", svcs)
+	}()
 
 	// Check that we can connect services over the mesh gateways
 	logger.Log(t, "creating static-server in dc2")
@@ -145,6 +171,11 @@ func TestMeshGatewaySecure(t *testing.T) {
 				"meshGateway.replicas": "1",
 			}
 
+			if cfg.UseKind {
+				primaryHelmValues["meshGateway.service.type"] = "NodePort"
+				primaryHelmValues["meshGateway.service.nodePort"] = "30000"
+			}
+
 			releaseName := helpers.RandomName()
 
 			// Install the primary consul cluster in the default kubernetes context
@@ -184,10 +215,20 @@ func TestMeshGatewaySecure(t *testing.T) {
 				"server.extraVolumes[0].items[0].key":  "serverConfigJSON",
 				"server.extraVolumes[0].items[0].path": "config.json",
 
+				// Enterprise license job will fail if it runs in the secondary DC,
+				// so we're explicitly setting these values to empty to avoid that.
+				"server.enterpriseLicense.secretName": "",
+				"server.enterpriseLicense.secretKey":  "",
+
 				"connectInject.enabled": "true",
 
 				"meshGateway.enabled":  "true",
 				"meshGateway.replicas": "1",
+			}
+
+			if cfg.UseKind {
+				secondaryHelmValues["meshGateway.service.type"] = "NodePort"
+				secondaryHelmValues["meshGateway.service.nodePort"] = "30000"
 			}
 
 			// Install the secondary consul cluster in the secondary kubernetes context
@@ -199,7 +240,7 @@ func TestMeshGatewaySecure(t *testing.T) {
 
 			// Verify federation between servers
 			logger.Log(t, "verifying federation was successful")
-			verifyFederation(t, primaryClient, secondaryClient, true)
+			verifyFederation(t, primaryClient, secondaryClient, releaseName, true)
 
 			// Check that we can connect services over the mesh gateways
 			logger.Log(t, "creating static-server in dc2")
@@ -225,23 +266,26 @@ func TestMeshGatewaySecure(t *testing.T) {
 // verifyFederation checks that the WAN federation between servers is successful
 // by first checking members are alive from the perspective of both servers.
 // If secure is true, it will also check that the ACL replication is running on the secondary server.
-func verifyFederation(t *testing.T, primaryClient, secondaryClient *api.Client, secure bool) {
-	const consulMemberStatusAlive = 1
+func verifyFederation(t *testing.T, primaryClient, secondaryClient *api.Client, releaseName string, secure bool) {
+	retrier := &retry.Timer{Timeout: 5 * time.Minute, Wait: 1 * time.Second}
+	start := time.Now()
 
-	retrier := &retry.Timer{Timeout: 1 * time.Minute, Wait: 1 * time.Second}
-
+	// Check that server in dc1 is healthy from the perspective of the server in dc2, and vice versa.
+	// We're calling the Consul health API, as opposed to checking serf membership status,
+	// because we need to make sure that the federated servers can make API calls and forward requests
+	// from one server to another. From running tests in CI for a while and using serf membership status before,
+	// we've noticed that the status could be "alive" as soon as the server in the secondary cluster joins the primary
+	// and then switch to "failed". This would require us to check that the status is "alive" is showing consistently for
+	// some amount of time, which could be quite flakey. Calling the API in another datacenter allows us to check that
+	// each server can forward calls to another, which is what we need for connect.
 	retry.RunWith(retrier, t, func(r *retry.R) {
-		members, err := primaryClient.Agent().Members(true)
+		secondaryServerHealth, _, err := primaryClient.Health().Node(fmt.Sprintf("%s-consul-server-0", releaseName), &api.QueryOptions{Datacenter: "dc2"})
 		require.NoError(r, err)
-		require.Len(r, members, 2)
-		require.Equal(r, members[0].Status, consulMemberStatusAlive)
-		require.Equal(r, members[1].Status, consulMemberStatusAlive)
+		require.Equal(r, secondaryServerHealth.AggregatedStatus(), api.HealthPassing)
 
-		members, err = secondaryClient.Agent().Members(true)
+		primaryServerHealth, _, err := secondaryClient.Health().Node(fmt.Sprintf("%s-consul-server-0", releaseName), &api.QueryOptions{Datacenter: "dc1"})
 		require.NoError(r, err)
-		require.Len(r, members, 2)
-		require.Equal(r, members[0].Status, consulMemberStatusAlive)
-		require.Equal(r, members[1].Status, consulMemberStatusAlive)
+		require.Equal(r, primaryServerHealth.AggregatedStatus(), api.HealthPassing)
 
 		if secure {
 			replicationStatus, _, err := secondaryClient.ACL().Replication(nil)
@@ -250,4 +294,6 @@ func verifyFederation(t *testing.T, primaryClient, secondaryClient *api.Client, 
 			require.True(r, replicationStatus.Running)
 		}
 	})
+
+	logger.Logf(t, "Took %s to verify federation", time.Since(start))
 }

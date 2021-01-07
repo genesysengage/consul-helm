@@ -9,6 +9,7 @@ import (
 
 	"github.com/gruntwork-io/terratest/modules/k8s"
 	"github.com/hashicorp/consul-helm/test/acceptance/framework/helpers"
+	"github.com/hashicorp/consul-helm/test/acceptance/framework/logger"
 	"github.com/hashicorp/consul/sdk/testutil/retry"
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/apps/v1"
@@ -83,21 +84,7 @@ func CheckStaticServerConnection(
 ) {
 	t.Helper()
 
-	retrier := &retry.Timer{Timeout: 20 * time.Second, Wait: 500 * time.Millisecond}
-
-	args := []string{"exec", "deploy/" + deploymentName, "-c", deploymentName, "--", "curl", "-vvvsSf"}
-	args = append(args, curlArgs...)
-
-	retry.RunWith(retrier, t, func(r *retry.R) {
-		output, err := RunKubectlAndGetOutputE(t, options, args...)
-		if expectSuccess {
-			require.NoError(r, err)
-			require.Contains(r, output, "hello world")
-		} else {
-			require.Error(r, err)
-			require.Contains(r, output, failureMessage)
-		}
-	})
+	CheckStaticServerConnectionMultipleFailureMessages(t, options, expectSuccess, deploymentName, []string{failureMessage}, curlArgs...)
 }
 
 // CheckStaticServerConnectionMultipleFailureMessages execs into a pod of the deployment given by deploymentName
@@ -117,7 +104,7 @@ func CheckStaticServerConnectionMultipleFailureMessages(
 ) {
 	t.Helper()
 
-	retrier := &retry.Timer{Timeout: 20 * time.Second, Wait: 500 * time.Millisecond}
+	retrier := &retry.Timer{Timeout: 80 * time.Second, Wait: 2 * time.Second}
 
 	args := []string{"exec", "deploy/" + deploymentName, "-c", deploymentName, "--", "curl", "-vvvsSf"}
 	args = append(args, curlArgs...)
@@ -145,7 +132,9 @@ func CheckStaticServerConnectionMultipleFailureMessages(
 // CheckStaticServerConnectionSuccessful is just like CheckStaticServerConnection
 // but it always expects a successful connection.
 func CheckStaticServerConnectionSuccessful(t *testing.T, options *k8s.KubectlOptions, deploymentName string, curlArgs ...string) {
+	start := time.Now()
 	CheckStaticServerConnection(t, options, true, deploymentName, "", curlArgs...)
+	logger.Logf(t, "Took %s to check if static server connection was successful", time.Since(start))
 }
 
 // CheckStaticServerConnectionSuccessful is just like CheckStaticServerConnection
