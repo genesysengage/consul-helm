@@ -4,10 +4,10 @@ package example
 import (
 	"testing"
 
-	testsuite "github.com/hashicorp/consul-helm/test/acceptance/framework/suite"
+	"github.com/hashicorp/consul-helm/test/acceptance/framework"
 )
 
-var suite testsuite.Suite
+var suite framework.Suite
 
 func TestMain(m *testing.M) {
 	// First, uncomment the line below to create a new suite so that all flags are parsed.

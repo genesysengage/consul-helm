@@ -1,4 +1,4 @@
-package consul
+package framework
 
 import (
 	"context"
@@ -6,25 +6,22 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gruntwork-io/terratest/modules/helm"
-	terratestk8s "github.com/gruntwork-io/terratest/modules/k8s"
-	terratestLogger "github.com/gruntwork-io/terratest/modules/logger"
-	"github.com/hashicorp/consul-helm/test/acceptance/framework/config"
-	"github.com/hashicorp/consul-helm/test/acceptance/framework/environment"
-	"github.com/hashicorp/consul-helm/test/acceptance/framework/helpers"
-	"github.com/hashicorp/consul-helm/test/acceptance/framework/k8s"
-	"github.com/hashicorp/consul-helm/test/acceptance/framework/logger"
+	"github.com/gruntwork-io/terratest/modules/k8s"
+	"github.com/gruntwork-io/terratest/modules/logger"
+	"github.com/hashicorp/consul-helm/test/acceptance/helpers"
 	"github.com/hashicorp/consul/api"
-	"github.com/hashicorp/consul/sdk/testutil/retry"
+	"github.com/hashicorp/consul/sdk/freeport"
 	"github.com/stretchr/testify/require"
-	policyv1beta "k8s.io/api/policy/v1beta1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
+
+// The path to the helm chart.
+// Note: this will need to be changed if this file is moved.
+const helmChartPath = "../../../.."
 
 // Cluster represents a consul cluster object
 type Cluster interface {
@@ -40,34 +37,25 @@ type Cluster interface {
 // HelmCluster implements Cluster and uses Helm
 // to create, destroy, and upgrade consul
 type HelmCluster struct {
-	cfg                config.TestConfig
-	ctx                environment.TestContext
+	ctx                TestContext
 	helmOptions        *helm.Options
 	releaseName        string
 	kubernetesClient   kubernetes.Interface
 	noCleanupOnFailure bool
 	debugDirectory     string
-	logger             terratestLogger.TestLogger
 }
 
 func NewHelmCluster(
 	t *testing.T,
 	helmValues map[string]string,
-	ctx environment.TestContext,
-	cfg *config.TestConfig,
-	releaseName string,
-) Cluster {
+	ctx TestContext,
+	cfg *TestConfig,
+	releaseName string) Cluster {
 
-	if cfg.EnablePodSecurityPolicies {
-		configurePodSecurityPolicies(t, ctx.KubernetesClient(t), cfg, ctx.KubectlOptions(t).Namespace)
-	}
-
-	// Deploy with the following defaults unless helmValues overwrites it.
+	// Deploy single-server cluster by default unless helmValues overwrites that
 	values := map[string]string{
-		"server.replicas":              "1",
-		"server.bootstrapExpect":       "1",
-		"connectInject.envoyExtraArgs": "--log-level debug",
-		"connectInject.logLevel":       "debug",
+		"server.replicas":        "1",
+		"server.bootstrapExpect": "1",
 	}
 	valuesFromConfig, err := cfg.HelmValuesFromConfig()
 	require.NoError(t, err)
@@ -76,20 +64,10 @@ func NewHelmCluster(
 	mergeMaps(values, valuesFromConfig)
 	mergeMaps(values, helmValues)
 
-	logger := terratestLogger.New(logger.TestLogger{})
-
-	// Wait up to 15 min for K8s resources to be in a ready state. Increasing
-	// this from the default of 5 min could help with flakiness in environments
-	// like AKS where volumes take a long time to mount.
-	extraArgs := map[string][]string{
-		"install": {"--timeout", "15m"},
-	}
-
 	opts := &helm.Options{
 		SetValues:      values,
 		KubectlOptions: ctx.KubectlOptions(t),
-		Logger:         logger,
-		ExtraArgs:      extraArgs,
+		Logger:         logger.TestingT,
 	}
 	return &HelmCluster{
 		ctx:                ctx,
@@ -98,7 +76,6 @@ func NewHelmCluster(
 		kubernetesClient:   ctx.KubernetesClient(t),
 		noCleanupOnFailure: cfg.NoCleanupOnFailure,
 		debugDirectory:     cfg.DebugDirectory,
-		logger:             logger,
 	}
 }
 
@@ -114,7 +91,8 @@ func (h *HelmCluster) Create(t *testing.T) {
 	// Fail if there are any existing installations of the Helm chart.
 	h.checkForPriorInstallations(t)
 
-	helm.Install(t, h.helmOptions, config.HelmChartPath, h.releaseName)
+	err := helm.InstallE(t, h.helmOptions, helmChartPath, h.releaseName)
+	require.NoError(t, err)
 
 	helpers.WaitForAllPodsToBeReady(t, h.kubernetesClient, h.helmOptions.KubectlOptions.Namespace, fmt.Sprintf("release=%s", h.releaseName))
 }
@@ -122,7 +100,7 @@ func (h *HelmCluster) Create(t *testing.T) {
 func (h *HelmCluster) Destroy(t *testing.T) {
 	t.Helper()
 
-	k8s.WritePodsDebugInfoIfFailed(t, h.helmOptions.KubectlOptions, h.debugDirectory, "release="+h.releaseName)
+	helpers.WritePodsDebugInfoIfFailed(t, h.helmOptions.KubectlOptions, h.debugDirectory, "release="+h.releaseName)
 
 	// Ignore the error returned by the helm delete here so that we can
 	// always idempotently clean up resources in the cluster.
@@ -168,7 +146,7 @@ func (h *HelmCluster) Destroy(t *testing.T) {
 	}
 
 	// Delete any secrets that have h.releaseName in their name.
-	secrets, err := h.kubernetesClient.CoreV1().Secrets(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{})
+	secrets, err := h.kubernetesClient.CoreV1().Secrets(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
 	require.NoError(t, err)
 	for _, secret := range secrets.Items {
 		if strings.Contains(secret.Name, h.releaseName) {
@@ -196,7 +174,7 @@ func (h *HelmCluster) Upgrade(t *testing.T, helmValues map[string]string) {
 	t.Helper()
 
 	mergeMaps(h.helmOptions.SetValues, helmValues)
-	helm.Upgrade(t, h.helmOptions, config.HelmChartPath, h.releaseName)
+	helm.Upgrade(t, h.helmOptions, helmChartPath, h.releaseName)
 	helpers.WaitForAllPodsToBeReady(t, h.kubernetesClient, h.helmOptions.KubectlOptions.Namespace, fmt.Sprintf("release=%s", h.releaseName))
 }
 
@@ -205,7 +183,7 @@ func (h *HelmCluster) SetupConsulClient(t *testing.T, secure bool) *api.Client {
 
 	namespace := h.helmOptions.KubectlOptions.Namespace
 	config := api.DefaultConfig()
-	localPort := terratestk8s.GetAvailablePort(t)
+	localPort := freeport.MustTake(1)[0]
 	remotePort := 8500 // use non-secure by default
 
 	if secure {
@@ -234,21 +212,8 @@ func (h *HelmCluster) SetupConsulClient(t *testing.T, secure bool) *api.Client {
 		}
 	}
 
-	tunnel := terratestk8s.NewTunnelWithLogger(
-		h.helmOptions.KubectlOptions,
-		terratestk8s.ResourceTypePod,
-		fmt.Sprintf("%s-consul-server-0", h.releaseName),
-		localPort,
-		remotePort,
-		h.logger)
-
-	// Retry creating the port forward since it can fail occasionally.
-	retry.RunWith(&retry.Counter{Wait: 1 * time.Second, Count: 3}, t, func(r *retry.R) {
-		// NOTE: It's okay to pass in `t` to ForwardPortE despite being in a retry
-		// because we're using ForwardPortE (not ForwardPort) so the `t` won't
-		// get used to fail the test, just for logging.
-		require.NoError(r, tunnel.ForwardPortE(t))
-	})
+	tunnel := k8s.NewTunnel(h.helmOptions.KubectlOptions, k8s.ResourceTypePod, fmt.Sprintf("%s-consul-server-0", h.releaseName), localPort, remotePort)
+	tunnel.ForwardPort(t)
 
 	t.Cleanup(func() {
 		tunnel.Close()
@@ -266,134 +231,18 @@ func (h *HelmCluster) SetupConsulClient(t *testing.T, secure bool) *api.Client {
 func (h *HelmCluster) checkForPriorInstallations(t *testing.T) {
 	t.Helper()
 
-	var helmListOutput string
-	// Check if there's an existing cluster and fail if there is one.
-	// We may need to retry since this is the first command run once the Kube
-	// cluster is created and sometimes the API server returns errors.
-	retry.RunWith(&retry.Counter{Wait: 1 * time.Second, Count: 3}, t, func(r *retry.R) {
-		var err error
-		// NOTE: It's okay to pass in `t` to RunHelmCommandAndGetOutputE despite being in a retry
-		// because we're using RunHelmCommandAndGetOutputE (not RunHelmCommandAndGetOutput) so the `t` won't
-		// get used to fail the test, just for logging.
-		helmListOutput, err = helm.RunHelmCommandAndGetOutputE(t, h.helmOptions, "list", "--output", "json")
-		require.NoError(r, err)
-	})
+	// check if there's an existing cluster and fail if there is
+	output, err := helm.RunHelmCommandAndGetOutputE(t, h.helmOptions, "list", "--output", "json")
+	require.NoError(t, err)
 
 	var installedReleases []map[string]string
 
-	err := json.Unmarshal([]byte(helmListOutput), &installedReleases)
-	require.NoError(t, err, "unmarshalling %q", helmListOutput)
+	err = json.Unmarshal([]byte(output), &installedReleases)
+	require.NoError(t, err)
 
 	for _, r := range installedReleases {
 		require.NotContains(t, r["chart"], "consul", fmt.Sprintf("detected an existing installation of Consul %s, release name: %s", r["chart"], r["name"]))
 	}
-}
-
-// configurePodSecurityPolicies creates a simple pod security policy, a cluster role to allow access to the PSP,
-// and a role binding that binds the default service account in the helm installation namespace to the cluster role.
-// We bind the default service account for tests that are spinning up pods without a service account set so that
-// they will not be rejected by the kube pod security policy controller.
-func configurePodSecurityPolicies(t *testing.T, client kubernetes.Interface, cfg *config.TestConfig, namespace string) {
-	pspName := "test-psp"
-
-	// Pod Security Policy
-	{
-		// Check if the pod security policy with this name already exists
-		psp, err := client.PolicyV1beta1().PodSecurityPolicies().Get(context.Background(), pspName, metav1.GetOptions{})
-		// If it doesn't exist, create it.
-		if errors.IsNotFound(err) {
-			// This pod security policy can be used by any tests resources.
-			// This policy is fairly simple and only prevents from running privileged containers.
-			psp = &policyv1beta.PodSecurityPolicy{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-psp",
-				},
-				Spec: policyv1beta.PodSecurityPolicySpec{
-					Privileged: false,
-					SELinux: policyv1beta.SELinuxStrategyOptions{
-						Rule: policyv1beta.SELinuxStrategyRunAsAny,
-					},
-					SupplementalGroups: policyv1beta.SupplementalGroupsStrategyOptions{
-						Rule: policyv1beta.SupplementalGroupsStrategyRunAsAny,
-					},
-					RunAsUser: policyv1beta.RunAsUserStrategyOptions{
-						Rule: policyv1beta.RunAsUserStrategyRunAsAny,
-					},
-					FSGroup: policyv1beta.FSGroupStrategyOptions{
-						Rule: policyv1beta.FSGroupStrategyRunAsAny,
-					},
-					Volumes: []policyv1beta.FSType{policyv1beta.All},
-				},
-			}
-			_, err = client.PolicyV1beta1().PodSecurityPolicies().Create(context.Background(), psp, metav1.CreateOptions{})
-			require.NoError(t, err)
-		} else {
-			require.NoError(t, err)
-		}
-	}
-
-	// Cluster role for the PSP.
-	{
-		// Check if we have a cluster role that authorizes the use of the pod security policy.
-		pspClusterRole, err := client.RbacV1().ClusterRoles().Get(context.Background(), pspName, metav1.GetOptions{})
-
-		// If it doesn't exist, create the clusterrole.
-		if errors.IsNotFound(err) {
-			pspClusterRole = &rbacv1.ClusterRole{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: pspName,
-				},
-				Rules: []rbacv1.PolicyRule{
-					{
-						Verbs:         []string{"use"},
-						APIGroups:     []string{"policy"},
-						Resources:     []string{"podsecuritypolicies"},
-						ResourceNames: []string{pspName},
-					},
-				},
-			}
-			_, err = client.RbacV1().ClusterRoles().Create(context.Background(), pspClusterRole, metav1.CreateOptions{})
-			require.NoError(t, err)
-		} else {
-			require.NoError(t, err)
-		}
-	}
-
-	// A role binding to allow default service account in the installation namespace access to the PSP.
-	{
-		// Check if this cluster role binding already exists.
-		pspRoleBinding, err := client.RbacV1().RoleBindings(namespace).Get(context.Background(), pspName, metav1.GetOptions{})
-
-		if errors.IsNotFound(err) {
-			pspRoleBinding = &rbacv1.RoleBinding{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: pspName,
-				},
-				Subjects: []rbacv1.Subject{
-					{
-						Kind:      rbacv1.ServiceAccountKind,
-						Name:      "default",
-						Namespace: namespace,
-					},
-				},
-				RoleRef: rbacv1.RoleRef{
-					Kind: "ClusterRole",
-					Name: pspName,
-				},
-			}
-
-			_, err = client.RbacV1().RoleBindings(namespace).Create(context.Background(), pspRoleBinding, metav1.CreateOptions{})
-			require.NoError(t, err)
-		} else {
-			require.NoError(t, err)
-		}
-	}
-
-	helpers.Cleanup(t, cfg.NoCleanupOnFailure, func() {
-		client.PolicyV1beta1().PodSecurityPolicies().Delete(context.Background(), pspName, metav1.DeleteOptions{})
-		client.RbacV1().ClusterRoles().Delete(context.Background(), pspName, metav1.DeleteOptions{})
-		client.RbacV1().RoleBindings(namespace).Delete(context.Background(), pspName, metav1.DeleteOptions{})
-	})
 }
 
 // mergeValues will merge the values in b with values in a and save in a.

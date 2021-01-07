@@ -1,4 +1,4 @@
-package flags
+package framework
 
 import (
 	"testing"
@@ -115,7 +115,7 @@ func TestFlags_validate(t *testing.T) {
 				flagEnterpriseLicenseSecretName: tt.fields.flagEntLicenseSecretName,
 				flagEnterpriseLicenseSecretKey:  tt.fields.flagEntLicenseSecretKey,
 			}
-			err := tf.Validate()
+			err := tf.validate()
 			if tt.wantErr {
 				require.EqualError(t, err, tt.errMessage)
 			} else {

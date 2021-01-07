@@ -83,7 +83,7 @@ load _helpers
       --set 'connectInject.enabled=true' \
       . | tee /dev/stderr |
       yq -s -r '.[0].spec.template.spec.containers[0].image' | tee /dev/stderr)
-  [ "${actual}" = "envoyproxy/envoy-alpine:v1.16.0" ]
+  [ "${actual}" = "envoyproxy/envoy-alpine:v1.14.4" ]
 }
 
 @test "ingressGateways/Deployment: envoy image can be set using the global value" {
@@ -159,18 +159,6 @@ load _helpers
   # check that the volume uses the provided secret key
   local actual=$(echo $ca_cert_volume | yq -r '.secret.items[0].key' | tee /dev/stderr)
   [ "${actual}" = "key" ]
-}
-
-@test "ingressGateway/Deployment: CA cert volume present when TLS is enabled" {
-  cd `chart_dir`
-  local actual=$(helm template \
-      -s templates/ingress-gateways-deployment.yaml  \
-      --set 'ingressGateways.enabled=true' \
-      --set 'connectInject.enabled=true' \
-      --set 'global.tls.enabled=true' \
-      . | tee /dev/stderr |
-      yq '.spec.template.spec.volumes[] | select(.name == "consul-ca-cert")' | tee /dev/stderr)
-  [ "${actual}" != "" ]
 }
 
 #--------------------------------------------------------------------

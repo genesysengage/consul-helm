@@ -1,12 +1,11 @@
-package environment
+package framework
 
 import (
 	"fmt"
 	"testing"
 
 	"github.com/gruntwork-io/terratest/modules/k8s"
-	"github.com/hashicorp/consul-helm/test/acceptance/framework/config"
-	"github.com/hashicorp/consul-helm/test/acceptance/framework/helpers"
+	"github.com/hashicorp/consul-helm/test/acceptance/helpers"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -31,15 +30,15 @@ type TestContext interface {
 	KubernetesClient(t *testing.T) kubernetes.Interface
 }
 
-type KubernetesEnvironment struct {
+type kubernetesEnvironment struct {
 	contexts map[string]*kubernetesContext
 }
 
-func NewKubernetesEnvironmentFromConfig(config *config.TestConfig) *KubernetesEnvironment {
+func newKubernetesEnvironmentFromConfig(config *TestConfig) *kubernetesEnvironment {
 	defaultContext := NewContext(config.KubeNamespace, config.Kubeconfig, config.KubeContext)
 
 	// Create a kubernetes environment with default context.
-	kenv := &KubernetesEnvironment{
+	kenv := &kubernetesEnvironment{
 		contexts: map[string]*kubernetesContext{
 			DefaultContextName: defaultContext,
 		},
@@ -53,14 +52,14 @@ func NewKubernetesEnvironmentFromConfig(config *config.TestConfig) *KubernetesEn
 	return kenv
 }
 
-func (k *KubernetesEnvironment) Context(t *testing.T, name string) TestContext {
+func (k *kubernetesEnvironment) Context(t *testing.T, name string) TestContext {
 	ctx, ok := k.contexts[name]
 	require.Truef(t, ok, fmt.Sprintf("requested context %s not found", name))
 
 	return ctx
 }
 
-func (k *KubernetesEnvironment) DefaultContext(t *testing.T) TestContext {
+func (k *kubernetesEnvironment) DefaultContext(t *testing.T) TestContext {
 	ctx, ok := k.contexts[DefaultContextName]
 	require.Truef(t, ok, "default context not found")
 

@@ -4,12 +4,12 @@ import (
 	"os"
 	"testing"
 
-	testsuite "github.com/hashicorp/consul-helm/test/acceptance/framework/suite"
+	"github.com/hashicorp/consul-helm/test/acceptance/framework"
 )
 
-var suite testsuite.Suite
+var suite framework.Suite
 
 func TestMain(m *testing.M) {
-	suite = testsuite.NewSuite(m)
+	suite = framework.NewSuite(m)
 	os.Exit(suite.Run())
 }

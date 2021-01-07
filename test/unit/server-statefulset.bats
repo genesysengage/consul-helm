@@ -161,128 +161,6 @@ load _helpers
 }
 
 #--------------------------------------------------------------------
-# exposeGossipAndRPCPorts
-
-@test "server/StatefulSet: server gossip and RPC ports are not exposed by default" {
-  cd `chart_dir`
-  local object=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      . | tee /dev/stderr )
-
-  # Test that hostPort is not set for gossip ports
-  local actual=$(echo "$object" |
-      yq -r '.spec.template.spec.containers[0].ports[] | select(.name == "serflan-tcp")' | yq -r '.hostPort' | tee /dev/stderr)
-  [ "${actual}" = "null" ]
-
-  local actual=$(echo "$object" |
-      yq -r '.spec.template.spec.containers[0].ports[] | select(.name == "serflan-udp")' | yq -r '.hostPort' | tee /dev/stderr)
-  [ "${actual}" = "null" ]
-
-  # Test that hostPort is not set for rpc ports
-  local actual=$(echo "$object" |
-      yq -r '.spec.template.spec.containers[0].ports[] | select(.name == "server")' | yq -r '.hostPort' | tee /dev/stderr)
-  [ "${actual}" = "null" ]
-
-  # Test that ADVERTISE_IP is being set to podIP
-  local actual=$(echo "$object" |
-    yq -r -c '.spec.template.spec.containers[0].env | map(select(.name == "ADVERTISE_IP"))' | tee /dev/stderr)
-  [ "${actual}" = '[{"name":"ADVERTISE_IP","valueFrom":{"fieldRef":{"fieldPath":"status.podIP"}}}]' ]
-}
-
-@test "server/StatefulSet: server gossip and RPC ports can be exposed" {
-  cd `chart_dir`
-  local object=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'server.exposeGossipAndRPCPorts=true' \
-      . | tee /dev/stderr)
-
-  # Test that hostPort is set for gossip ports
-  local actual=$(echo "$object" |
-      yq -r '.spec.template.spec.containers[0].ports[] | select(.name == "serflan-tcp")' | yq -r '.hostPort' | tee /dev/stderr)
-  [ "${actual}" = "8301" ]
-
-  local actual=$(echo "$object" |
-      yq -r '.spec.template.spec.containers[0].ports[] | select(.name == "serflan-udp")' | yq -r '.hostPort' | tee /dev/stderr)
-  [ "${actual}" = "8301" ]
-
-  # Test that hostPort is set for rpc ports
-  local actual=$(echo "$object" |
-      yq -r '.spec.template.spec.containers[0].ports[] | select(.name == "server")' | yq -r '.hostPort' | tee /dev/stderr)
-  [ "${actual}" = "8300" ]
-
-  # Test that ADVERTISE_IP is being set to hostIP
-  local actual=$(echo "$object" |
-    yq -r -c '.spec.template.spec.containers[0].env | map(select(.name == "ADVERTISE_IP"))' | tee /dev/stderr)
-  [ "${actual}" = '[{"name":"ADVERTISE_IP","valueFrom":{"fieldRef":{"fieldPath":"status.hostIP"}}}]' ]
-
-}
-
-#--------------------------------------------------------------------
-# serflan
-
-@test "server/StatefulSet: server.ports.serflan.port is set to 8301 by default" {
-  cd `chart_dir`
-  local object=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      . | tee /dev/stderr )
-
-  local actual=$(echo "$object" |
-      yq -r '.spec.template.spec.containers[0].ports[] | select(.name == "serflan-tcp")' | yq -r '.containerPort' | tee /dev/stderr)
-  [ "${actual}" = "8301" ]
-
-  local actual=$(echo "$object" |
-      yq -r '.spec.template.spec.containers[0].ports[] | select(.name == "serflan-udp")' | yq -r '.containerPort' | tee /dev/stderr)
-  [ "${actual}" = "8301" ]
-
-  local command=$(echo "$object" |
-      yq -r '.spec.template.spec.containers[0].command' | tee /dev/stderr)
-
-  local actual=$(echo $command | jq -r ' . | any(contains("-serf-lan-port=8301"))' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
-}
-
-@test "server/StatefulSet: server.ports.serflan.port can be customized" {
-  cd `chart_dir`
-  local object=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'server.ports.serflan.port=9301' \
-      . | tee /dev/stderr )
-
-  local actual=$(echo "$object" |
-      yq -r '.spec.template.spec.containers[0].ports[] | select(.name == "serflan-tcp")' | yq -r '.containerPort' | tee /dev/stderr)
-  [ "${actual}" = "9301" ]
-
-  local actual=$(echo "$object" |
-      yq -r '.spec.template.spec.containers[0].ports[] | select(.name == "serflan-udp")' | yq -r '.containerPort' | tee /dev/stderr)
-  [ "${actual}" = "9301" ]
-
-  local command=$(echo "$object" |
-      yq -r '.spec.template.spec.containers[0].command' | tee /dev/stderr)
-
-  local actual=$(echo $command | jq -r ' . | any(contains("-serf-lan-port=9301"))' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
-}
-
-@test "server/StatefulSet: retry join uses server.ports.serflan.port" {
-  cd `chart_dir`
-  local command=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'server.replicas=3' \
-      --set 'server.ports.serflan.port=9301' \
-      . | tee /dev/stderr |
-      yq -r '.spec.template.spec.containers[0].command' | tee /dev/stderr)
-
-  local actual=$(echo $command | jq -r ' . | any(contains("-retry-join=\"${CONSUL_FULLNAME}-server-0.${CONSUL_FULLNAME}-server.${NAMESPACE}.svc:9301\""))' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
-
-  local actual=$(echo $command | jq -r ' . | any(contains("-retry-join=\"${CONSUL_FULLNAME}-server-1.${CONSUL_FULLNAME}-server.${NAMESPACE}.svc:9301\""))' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
-
-  local actual=$(echo $command | jq -r ' . | any(contains("-retry-join=\"${CONSUL_FULLNAME}-server-2.${CONSUL_FULLNAME}-server.${NAMESPACE}.svc:9301\""))' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
-}
-
-#--------------------------------------------------------------------
 # extraVolumes
 
 @test "server/StatefulSet: adds extra volume" {
@@ -524,7 +402,7 @@ load _helpers
   [ "${actual}" = "bar" ]
 }
 #--------------------------------------------------------------------
-# config-configmap
+# extraConfig
 
 @test "server/StatefulSet: adds config-checksum annotation when extraConfig is blank" {
   cd `chart_dir`
@@ -532,11 +410,7 @@ load _helpers
       -s templates/server-statefulset.yaml  \
       . | tee /dev/stderr |
       yq -r '.spec.template.metadata.annotations."consul.hashicorp.com/config-checksum"' | tee /dev/stderr)
-  if [[ $(v2) ]]; then
-    [ "${actual}" = 5d152ec45fdfa5a4cb95eee6aae027212a5adad08c6904e4089545afea0ab8f3 ]
-  else
-    [ "${actual}" = 355e9f414430ab2464a6948fcd763b4c79b7ad04b382820e77fb977021bbb635 ]
-  fi
+  [ "${actual}" = ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356 ]
 }
 
 @test "server/StatefulSet: adds config-checksum annotation when extraConfig is provided" {
@@ -546,25 +420,7 @@ load _helpers
       --set 'server.extraConfig="{\"hello\": \"world\"}"' \
       . | tee /dev/stderr |
       yq -r '.spec.template.metadata.annotations."consul.hashicorp.com/config-checksum"' | tee /dev/stderr)
-  if [[ $(v2) ]]; then
-    [ "${actual}" = 67ea7116413d1780d84055440a077abffcf5e520c997ddaf002f446bdcf19f0f ]
-  else
-    [ "${actual}" = d6874107a1da35a40f68469b1c8f58e0a8360af511ab931ed84b312dbbc11f45 ]
-  fi
-}
-
-@test "server/StatefulSet: adds config-checksum annotation when config is updated" {
-  cd `chart_dir`
-  local actual=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'global.acls.manageSystemACLs=true' \
-      . | tee /dev/stderr |
-      yq -r '.spec.template.metadata.annotations."consul.hashicorp.com/config-checksum"' | tee /dev/stderr)
-  if [[ $(v2) ]]; then
-    [ "${actual}" = 6519afe07b3c4d5697b92cba372f2aca9852cd4f1899216cd5cf620f46e9c178 ]
-  else
-    [ "${actual}" = 8bd7707a967de94e300c8df78fd0de469c3e0c40d816105f3230c5715febd1c7 ]
-  fi
+  [ "${actual}" = 83df36fdaf1b4acb815f1764f9ff2782c520ca012511f282ba9c57a04401a239 ]
 }
 
 #--------------------------------------------------------------------
@@ -590,7 +446,7 @@ load _helpers
 }
 
 #--------------------------------------------------------------------
-# global.openshift.enabled & server.securityContext
+# global.openshift.enabled
 
 @test "server/StatefulSet: setting server.disableFsGroupSecurityContext fails" {
   cd `chart_dir`
@@ -601,7 +457,7 @@ load _helpers
   [[ "$output" =~ "server.disableFsGroupSecurityContext has been removed. Please use global.openshift.enabled instead." ]]
 }
 
-@test "server/StatefulSet: securityContext is not set when global.openshift.enabled=true" {
+@test "server/StatefulSet: fsGroup is not set when global.openshift.enabled=true" {
   cd `chart_dir`
   local actual=$(helm template \
       -s templates/server-statefulset.yaml  \
@@ -611,43 +467,13 @@ load _helpers
   [ "${actual}" = "null" ]
 }
 
-#--------------------------------------------------------------------
-# server.securityContext
-
-@test "server/StatefulSet: sets default security context settings" {
+@test "server/StatefulSet: default fsGroup security context settings fsGroup: 1000" {
   cd `chart_dir`
-  local security_context=$(helm template \
+  local actual=$(helm template \
       -s templates/server-statefulset.yaml  \
       . | tee /dev/stderr |
-      yq -r '.spec.template.spec.securityContext' | tee /dev/stderr)
-
-  local actual=$(echo $security_context | jq -r .runAsNonRoot)
-  [ "${actual}" = "true" ]
-
-  local actual=$(echo $security_context | jq -r .fsGroup)
+      yq -r '.spec.template.spec.securityContext.fsGroup' | tee /dev/stderr)
   [ "${actual}" = "1000" ]
-
-  local actual=$(echo $security_context | jq -r .runAsUser)
-  [ "${actual}" = "100" ]
-
-  local actual=$(echo $security_context | jq -r .runAsGroup)
-  [ "${actual}" = "1000" ]
-}
-
-@test "server/StatefulSet: can overwrite security context settings" {
-  cd `chart_dir`
-  local security_context=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'server.securityContext.runAsNonRoot=false' \
-      --set 'server.securityContext.privileged=true' \
-      . | tee /dev/stderr |
-      yq -r '.spec.template.spec.securityContext' | tee /dev/stderr)
-
-  local actual=$(echo $security_context | jq -r .runAsNonRoot)
-  [ "${actual}" = "false" ]
-
-  local actual=$(echo $security_context | jq -r .privileged)
-  [ "${actual}" = "true" ]
 }
 
 #--------------------------------------------------------------------
@@ -726,19 +552,19 @@ load _helpers
       yq -r '.spec.template.spec.containers[0].env' | tee /dev/stderr)
 
   local actual=$(echo $object |
-      yq -r '.[3].name' | tee /dev/stderr)
+      yq -r '.[2].name' | tee /dev/stderr)
   [ "${actual}" = "custom_proxy" ]
 
   local actual=$(echo $object |
-      yq -r '.[3].value' | tee /dev/stderr)
+      yq -r '.[2].value' | tee /dev/stderr)
   [ "${actual}" = "fakeproxy" ]
 
   local actual=$(echo $object |
-      yq -r '.[4].name' | tee /dev/stderr)
+      yq -r '.[3].name' | tee /dev/stderr)
   [ "${actual}" = "no_proxy" ]
 
   local actual=$(echo $object |
-      yq -r '.[4].value' | tee /dev/stderr)
+      yq -r '.[3].value' | tee /dev/stderr)
   [ "${actual}" = "custom_no_proxy" ]
 }
 
@@ -1067,35 +893,4 @@ load _helpers
       . | tee /dev/stderr |
       yq '.spec.template.spec.containers[0].command | join(" ") | contains("auto_encrypt = {allow_tls = true}")' | tee /dev/stderr)
   [ "${actual}" = "true" ]
-}
-
-#--------------------------------------------------------------------
-# -bootstrap-expect
-
-@test "server/StatefulSet: -bootstrap-expect defaults to replicas" {
-  cd `chart_dir`
-  local actual=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      . | tee /dev/stderr |
-      yq '.spec.template.spec.containers[0].command | join(" ") | contains("-bootstrap-expect=3")' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
-}
-
-@test "server/StatefulSet: -bootstrap-expect can be set by server.bootstrapExpect" {
-  cd `chart_dir`
-  local actual=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'server.bootstrapExpect=5' \
-      . | tee /dev/stderr |
-      yq '.spec.template.spec.containers[0].command | join(" ") | contains("-bootstrap-expect=5")' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
-}
-
-@test "server/StatefulSet: errors if bootstrapExpect < replicas" {
-  cd `chart_dir`
-  run helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'server.bootstrapExpect=1' .
-  [ "$status" -eq 1 ]
-  [[ "$output" =~ "server.bootstrapExpect cannot be less than server.replicas" ]]
 }

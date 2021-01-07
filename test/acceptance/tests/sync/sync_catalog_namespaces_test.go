@@ -5,11 +5,9 @@ import (
 	"testing"
 	"time"
 
-	terratestk8s "github.com/gruntwork-io/terratest/modules/k8s"
-	"github.com/hashicorp/consul-helm/test/acceptance/framework/consul"
-	"github.com/hashicorp/consul-helm/test/acceptance/framework/helpers"
-	"github.com/hashicorp/consul-helm/test/acceptance/framework/k8s"
-	"github.com/hashicorp/consul-helm/test/acceptance/framework/logger"
+	"github.com/gruntwork-io/terratest/modules/k8s"
+	"github.com/hashicorp/consul-helm/test/acceptance/framework"
+	"github.com/hashicorp/consul-helm/test/acceptance/helpers"
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/sdk/testutil/retry"
 	"github.com/stretchr/testify/require"
@@ -79,28 +77,28 @@ func TestSyncCatalogNamespaces(t *testing.T) {
 			}
 
 			releaseName := helpers.RandomName()
-			consulCluster := consul.NewHelmCluster(t, helmValues, ctx, cfg, releaseName)
+			consulCluster := framework.NewHelmCluster(t, helmValues, ctx, cfg, releaseName)
 
 			consulCluster.Create(t)
 
-			staticServerOpts := &terratestk8s.KubectlOptions{
+			staticServerOpts := &k8s.KubectlOptions{
 				ContextName: ctx.KubectlOptions(t).ContextName,
 				ConfigPath:  ctx.KubectlOptions(t).ConfigPath,
 				Namespace:   staticServerNamespace,
 			}
 
-			logger.Logf(t, "creating namespace %s", staticServerNamespace)
-			k8s.RunKubectl(t, ctx.KubectlOptions(t), "create", "ns", staticServerNamespace)
+			t.Logf("creating namespace %s", staticServerNamespace)
+			helpers.RunKubectl(t, ctx.KubectlOptions(t), "create", "ns", staticServerNamespace)
 			helpers.Cleanup(t, cfg.NoCleanupOnFailure, func() {
-				k8s.RunKubectl(t, ctx.KubectlOptions(t), "delete", "ns", staticServerNamespace)
+				helpers.RunKubectl(t, ctx.KubectlOptions(t), "delete", "ns", staticServerNamespace)
 			})
 
-			logger.Log(t, "creating a static-server with a service")
-			k8s.DeployKustomize(t, staticServerOpts, cfg.NoCleanupOnFailure, cfg.DebugDirectory, "../fixtures/bases/static-server")
+			t.Log("creating a static-server with a service")
+			helpers.DeployKustomize(t, staticServerOpts, cfg.NoCleanupOnFailure, cfg.DebugDirectory, "../fixtures/bases/static-server")
 
 			consulClient := consulCluster.SetupConsulClient(t, c.secure)
 
-			logger.Log(t, "checking that the service has been synced to Consul")
+			t.Log("checking that the service has been synced to Consul")
 			var services map[string][]string
 			counter := &retry.Counter{Count: 10, Wait: 5 * time.Second}
 

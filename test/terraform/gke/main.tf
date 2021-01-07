@@ -1,6 +1,5 @@
-provider "google-beta" {
+provider "google" {
   project = var.project
-  version = "~> 3.49.0"
 }
 
 resource "random_id" "suffix" {
@@ -14,8 +13,6 @@ data "google_container_engine_versions" "main" {
 }
 
 resource "google_container_cluster" "cluster" {
-  provider = "google-beta"
-
   count = var.cluster_count
 
   name               = "consul-k8s-${random_id.suffix[count.index].dec}"
@@ -24,10 +21,6 @@ resource "google_container_cluster" "cluster" {
   location           = var.zone
   min_master_version = data.google_container_engine_versions.main.latest_master_version
   node_version       = data.google_container_engine_versions.main.latest_master_version
-
-  pod_security_policy_config {
-    enabled = true
-  }
 }
 
 resource "null_resource" "kubectl" {
@@ -50,6 +43,6 @@ resource "null_resource" "kubectl" {
   provisioner "local-exec" {
     when       = destroy
     on_failure = continue
-    command    = "rm $HOME/.kube/consul-k8s*"
+    command    = "rm $HOME/.kube/${google_container_cluster.cluster[count.index].name}"
   }
 }

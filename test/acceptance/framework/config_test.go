@@ -1,10 +1,6 @@
-package config
+package framework
 
 import (
-	"fmt"
-	"io/ioutil"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -80,15 +76,6 @@ func TestConfig_HelmValuesFromConfig(t *testing.T) {
 				"global.openshift.enabled": "true",
 			},
 		},
-		{
-			"sets enablePodSecurityPolicies helm value when -enable-pod-security-policies is set",
-			TestConfig{
-				EnablePodSecurityPolicies: true,
-			},
-			map[string]string{
-				"global.enablePodSecurityPolicies": "true",
-			},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -100,52 +87,12 @@ func TestConfig_HelmValuesFromConfig(t *testing.T) {
 }
 
 func TestConfig_HelmValuesFromConfig_EntImage(t *testing.T) {
-	tests := []struct {
-		appVersion string
-		expImage   string
-		expErr     string
-	}{
-		{
-			appVersion: "1.9.0",
-			expImage:   "hashicorp/consul-enterprise:1.9.0-ent",
-		},
-		{
-			appVersion: "1.8.5-rc1",
-			expImage:   "hashicorp/consul-enterprise:1.8.5-ent-rc1",
-		},
-		{
-			appVersion: "1.7.0-beta3",
-			expImage:   "hashicorp/consul-enterprise:1.7.0-ent-beta3",
-		},
-		{
-			appVersion: "1",
-			expErr:     "unable to cast chartMap.appVersion to string",
-		},
+	cfg := TestConfig{
+		EnableEnterprise: true,
+		// We need to set a different path because these tests are run from a different directory.
+		helmChartPath: "../../..",
 	}
-	for _, tt := range tests {
-		t.Run(tt.appVersion, func(t *testing.T) {
-
-			// Write Chart.yaml to a temp dir which will then get parsed.
-			chartYAML := fmt.Sprintf(`apiVersion: v1
-name: consul
-appVersion: %s
-`, tt.appVersion)
-			tmp, err := ioutil.TempDir("", "")
-			require.NoError(t, err)
-			defer os.RemoveAll(tmp)
-			require.NoError(t, ioutil.WriteFile(filepath.Join(tmp, "Chart.yaml"), []byte(chartYAML), 0644))
-
-			cfg := TestConfig{
-				EnableEnterprise: true,
-				helmChartPath:    tmp,
-			}
-			values, err := cfg.HelmValuesFromConfig()
-			if tt.expErr != "" {
-				require.EqualError(t, err, tt.expErr)
-			} else {
-				require.NoError(t, err)
-				require.Contains(t, values["global.image"], tt.expImage)
-			}
-		})
-	}
+	values, err := cfg.HelmValuesFromConfig()
+	require.NoError(t, err)
+	require.Contains(t, values["global.image"], "hashicorp/consul-enterprise")
 }

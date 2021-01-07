@@ -6,10 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashicorp/consul-helm/test/acceptance/framework/consul"
-	"github.com/hashicorp/consul-helm/test/acceptance/framework/helpers"
-	"github.com/hashicorp/consul-helm/test/acceptance/framework/k8s"
-	"github.com/hashicorp/consul-helm/test/acceptance/framework/logger"
+	"github.com/hashicorp/consul-helm/test/acceptance/framework"
+	"github.com/hashicorp/consul-helm/test/acceptance/helpers"
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/sdk/testutil/retry"
 	"github.com/stretchr/testify/require"
@@ -38,32 +36,35 @@ func TestController(t *testing.T) {
 			ctx := suite.Environment().DefaultContext(t)
 
 			helmValues := map[string]string{
-				"controller.enabled":           "true",
-				"connectInject.enabled":        "true",
+				"controller.enabled":    "true",
+				"connectInject.enabled": "true",
+				// todo: remove when 1.9.0 is released.
+				"global.image": "hashicorpdev/consul",
+
 				"global.tls.enabled":           strconv.FormatBool(c.secure),
 				"global.tls.enableAutoEncrypt": strconv.FormatBool(c.autoEncrypt),
 				"global.acls.manageSystemACLs": strconv.FormatBool(c.secure),
 			}
 
 			releaseName := helpers.RandomName()
-			consulCluster := consul.NewHelmCluster(t, helmValues, ctx, cfg, releaseName)
+			consulCluster := framework.NewHelmCluster(t, helmValues, ctx, cfg, releaseName)
 
 			consulCluster.Create(t)
 			consulClient := consulCluster.SetupConsulClient(t, c.secure)
 
 			// Test creation.
 			{
-				logger.Log(t, "creating custom resources")
+				t.Log("creating custom resources")
 				retry.Run(t, func(r *retry.R) {
 					// Retry the kubectl apply because we've seen sporadic
 					// "connection refused" errors where the mutating webhook
 					// endpoint fails initially.
-					out, err := k8s.RunKubectlAndGetOutputE(t, ctx.KubectlOptions(t), "apply", "-f", "../fixtures/crds")
+					out, err := helpers.RunKubectlAndGetOutputE(t, ctx.KubectlOptions(t), "apply", "-f", "../fixtures/crds")
 					require.NoError(r, err, out)
 					helpers.Cleanup(t, cfg.NoCleanupOnFailure, func() {
 						// Ignore errors here because if the test ran as expected
 						// the custom resources will have been deleted.
-						k8s.RunKubectlAndGetOutputE(t, ctx.KubectlOptions(t), "delete", "-f", "../fixtures/crds")
+						helpers.RunKubectlAndGetOutputE(t, ctx.KubectlOptions(t), "delete", "-f", "../fixtures/crds")
 					})
 				})
 
@@ -114,63 +115,32 @@ func TestController(t *testing.T) {
 					require.True(r, ok, "could not cast to ServiceIntentionsConfigEntry")
 					require.Equal(r, api.IntentionActionAllow, svcIntentionsEntry.Sources[0].Action)
 					require.Equal(r, api.IntentionActionAllow, svcIntentionsEntry.Sources[1].Permissions[0].Action)
-
-					// ingress-gateway
-					entry, _, err = consulClient.ConfigEntries().Get(api.IngressGateway, "ingress-gateway", nil)
-					require.NoError(r, err)
-					ingressGatewayEntry, ok := entry.(*api.IngressGatewayConfigEntry)
-					require.True(r, ok, "could not cast to IngressGatewayConfigEntry")
-					require.Len(r, ingressGatewayEntry.Listeners, 1)
-					require.Equal(r, "tcp", ingressGatewayEntry.Listeners[0].Protocol)
-					require.Equal(r, 8080, ingressGatewayEntry.Listeners[0].Port)
-					require.Len(r, ingressGatewayEntry.Listeners[0].Services, 1)
-					require.Equal(r, "foo", ingressGatewayEntry.Listeners[0].Services[0].Name)
-
-					// terminating-gateway
-					entry, _, err = consulClient.ConfigEntries().Get(api.TerminatingGateway, "terminating-gateway", nil)
-					require.NoError(r, err)
-					terminatingGatewayEntry, ok := entry.(*api.TerminatingGatewayConfigEntry)
-					require.True(r, ok, "could not cast to TerminatingGatewayConfigEntry")
-					require.Len(r, terminatingGatewayEntry.Services, 1)
-					require.Equal(r, "name", terminatingGatewayEntry.Services[0].Name)
-					require.Equal(r, "caFile", terminatingGatewayEntry.Services[0].CAFile)
-					require.Equal(r, "certFile", terminatingGatewayEntry.Services[0].CertFile)
-					require.Equal(r, "keyFile", terminatingGatewayEntry.Services[0].KeyFile)
-					require.Equal(r, "sni", terminatingGatewayEntry.Services[0].SNI)
 				})
 			}
 
 			// Test updates.
 			{
-				logger.Log(t, "patching service-defaults custom resource")
+				t.Log("patching service-defaults custom resource")
 				patchProtocol := "tcp"
-				k8s.RunKubectl(t, ctx.KubectlOptions(t), "patch", "servicedefaults", "defaults", "-p", fmt.Sprintf(`{"spec":{"protocol":"%s"}}`, patchProtocol), "--type=merge")
+				helpers.RunKubectl(t, ctx.KubectlOptions(t), "patch", "servicedefaults", "defaults", "-p", fmt.Sprintf(`{"spec":{"protocol":"%s"}}`, patchProtocol), "--type=merge")
 
-				logger.Log(t, "patching service-resolver custom resource")
+				t.Log("patching service-resolver custom resource")
 				patchRedirectSvc := "baz"
-				k8s.RunKubectl(t, ctx.KubectlOptions(t), "patch", "serviceresolver", "resolver", "-p", fmt.Sprintf(`{"spec":{"redirect":{"service": "%s"}}}`, patchRedirectSvc), "--type=merge")
+				helpers.RunKubectl(t, ctx.KubectlOptions(t), "patch", "serviceresolver", "resolver", "-p", fmt.Sprintf(`{"spec":{"redirect":{"service": "%s"}}}`, patchRedirectSvc), "--type=merge")
 
-				logger.Log(t, "patching proxy-defaults custom resource")
+				t.Log("patching proxy-defaults custom resource")
 				patchMeshGatewayMode := "remote"
-				k8s.RunKubectl(t, ctx.KubectlOptions(t), "patch", "proxydefaults", "global", "-p", fmt.Sprintf(`{"spec":{"meshGateway":{"mode": "%s"}}}`, patchMeshGatewayMode), "--type=merge")
+				helpers.RunKubectl(t, ctx.KubectlOptions(t), "patch", "proxydefaults", "global", "-p", fmt.Sprintf(`{"spec":{"meshGateway":{"mode": "%s"}}}`, patchMeshGatewayMode), "--type=merge")
 
-				logger.Log(t, "patching service-router custom resource")
+				t.Log("patching service-router custom resource")
 				patchPathPrefix := "/baz"
-				k8s.RunKubectl(t, ctx.KubectlOptions(t), "patch", "servicerouter", "router", "-p", fmt.Sprintf(`{"spec":{"routes":[{"match":{"http":{"pathPrefix":"%s"}}}]}}`, patchPathPrefix), "--type=merge")
+				helpers.RunKubectl(t, ctx.KubectlOptions(t), "patch", "servicerouter", "router", "-p", fmt.Sprintf(`{"spec":{"routes":[{"match":{"http":{"pathPrefix":"%s"}}}]}}`, patchPathPrefix), "--type=merge")
 
-				logger.Log(t, "patching service-splitter custom resource")
-				k8s.RunKubectl(t, ctx.KubectlOptions(t), "patch", "servicesplitter", "splitter", "-p", `{"spec": {"splits": [{"weight": 50}, {"weight": 50, "service": "other-splitter"}]}}`, "--type=merge")
+				t.Log("patching service-splitter custom resource")
+				helpers.RunKubectl(t, ctx.KubectlOptions(t), "patch", "servicesplitter", "splitter", "-p", `{"spec": {"splits": [{"weight": 50}, {"weight": 50, "service": "other-splitter"}]}}`, "--type=merge")
 
-				logger.Log(t, "patching service-intentions custom resource")
-				k8s.RunKubectl(t, ctx.KubectlOptions(t), "patch", "serviceintentions", "intentions", "-p", `{"spec": {"sources": [{"name": "svc2", "action": "deny"}, {"name": "svc3", "permissions": [{"action": "deny", "http": {"pathExact": "/foo", "methods": ["GET", "PUT"]}}]}]}}`, "--type=merge")
-
-				logger.Log(t, "patching ingress-gateway custom resource")
-				patchPort := 9090
-				k8s.RunKubectl(t, ctx.KubectlOptions(t), "patch", "ingressgateway", "ingress-gateway", "-p", fmt.Sprintf(`{"spec": {"listeners": [{"port": %d, "protocol": "tcp", "services": [{"name": "foo"}]}]}}`, patchPort), "--type=merge")
-
-				logger.Log(t, "patching terminating-gateway custom resource")
-				patchSNI := "patch-sni"
-				k8s.RunKubectl(t, ctx.KubectlOptions(t), "patch", "terminatinggateway", "terminating-gateway", "-p", fmt.Sprintf(`{"spec": {"services": [{"name":"name","caFile":"caFile","certFile":"certFile","keyFile":"keyFile","sni":"%s"}]}}`, patchSNI), "--type=merge")
+				t.Log("patching service-intentions custom resource")
+				helpers.RunKubectl(t, ctx.KubectlOptions(t), "patch", "serviceintentions", "intentions", "-p", `{"spec": {"sources": [{"name": "svc2", "action": "deny"}, {"name": "svc3", "permissions": [{"action": "deny", "http": {"pathExact": "/foo", "methods": ["GET", "PUT"]}}]}]}}`, "--type=merge")
 
 				counter := &retry.Counter{Count: 10, Wait: 500 * time.Millisecond}
 				retry.RunWith(counter, t, func(r *retry.R) {
@@ -218,48 +188,28 @@ func TestController(t *testing.T) {
 					require.True(r, ok, "could not cast to ServiceIntentionsConfigEntry")
 					require.Equal(r, api.IntentionActionDeny, svcIntentions.Sources[0].Action)
 					require.Equal(r, api.IntentionActionDeny, svcIntentions.Sources[1].Permissions[0].Action)
-
-					// ingress-gateway
-					entry, _, err = consulClient.ConfigEntries().Get(api.IngressGateway, "ingress-gateway", nil)
-					require.NoError(r, err)
-					ingressGatewayEntry, ok := entry.(*api.IngressGatewayConfigEntry)
-					require.True(r, ok, "could not cast to IngressGatewayConfigEntry")
-					require.Equal(r, patchPort, ingressGatewayEntry.Listeners[0].Port)
-
-					// terminating-gateway
-					entry, _, err = consulClient.ConfigEntries().Get(api.TerminatingGateway, "terminating-gateway", nil)
-					require.NoError(r, err)
-					terminatingGatewayEntry, ok := entry.(*api.TerminatingGatewayConfigEntry)
-					require.True(r, ok, "could not cast to TerminatingGatewayConfigEntry")
-					require.Equal(r, patchSNI, terminatingGatewayEntry.Services[0].SNI)
 				})
 			}
 
 			// Test a delete.
 			{
-				logger.Log(t, "deleting service-defaults custom resource")
-				k8s.RunKubectl(t, ctx.KubectlOptions(t), "delete", "servicedefaults", "defaults")
+				t.Log("deleting service-defaults custom resource")
+				helpers.RunKubectl(t, ctx.KubectlOptions(t), "delete", "servicedefaults", "defaults")
 
-				logger.Log(t, "deleting service-resolver custom resource")
-				k8s.RunKubectl(t, ctx.KubectlOptions(t), "delete", "serviceresolver", "resolver")
+				t.Log("deleting service-resolver custom resource")
+				helpers.RunKubectl(t, ctx.KubectlOptions(t), "delete", "serviceresolver", "resolver")
 
-				logger.Log(t, "deleting proxy-defaults custom resource")
-				k8s.RunKubectl(t, ctx.KubectlOptions(t), "delete", "proxydefaults", "global")
+				t.Log("deleting proxy-defaults custom resource")
+				helpers.RunKubectl(t, ctx.KubectlOptions(t), "delete", "proxydefaults", "global")
 
-				logger.Log(t, "deleting service-router custom resource")
-				k8s.RunKubectl(t, ctx.KubectlOptions(t), "delete", "servicerouter", "router")
+				t.Log("deleting service-router custom resource")
+				helpers.RunKubectl(t, ctx.KubectlOptions(t), "delete", "servicerouter", "router")
 
-				logger.Log(t, "deleting service-splitter custom resource")
-				k8s.RunKubectl(t, ctx.KubectlOptions(t), "delete", "servicesplitter", "splitter")
+				t.Log("deleting service-splitter custom resource")
+				helpers.RunKubectl(t, ctx.KubectlOptions(t), "delete", "servicesplitter", "splitter")
 
-				logger.Log(t, "deleting service-intentions custom resource")
-				k8s.RunKubectl(t, ctx.KubectlOptions(t), "delete", "serviceintentions", "intentions")
-
-				logger.Log(t, "deleting ingress-gateway custom resource")
-				k8s.RunKubectl(t, ctx.KubectlOptions(t), "delete", "ingressgateway", "ingress-gateway")
-
-				logger.Log(t, "deleting terminating-gateway custom resource")
-				k8s.RunKubectl(t, ctx.KubectlOptions(t), "delete", "terminatinggateway", "terminating-gateway")
+				t.Log("deleting service-intentions custom resource")
+				helpers.RunKubectl(t, ctx.KubectlOptions(t), "delete", "serviceintentions", "intentions")
 
 				counter := &retry.Counter{Count: 10, Wait: 500 * time.Millisecond}
 				retry.RunWith(counter, t, func(r *retry.R) {
@@ -290,16 +240,6 @@ func TestController(t *testing.T) {
 
 					// service-intentions
 					_, _, err = consulClient.ConfigEntries().Get(api.ServiceIntentions, IntentionName, nil)
-					require.Error(r, err)
-					require.Contains(r, err.Error(), "404 (Config entry not found")
-
-					// ingress-gateway
-					_, _, err = consulClient.ConfigEntries().Get(api.IngressGateway, "ingress-gateway", nil)
-					require.Error(r, err)
-					require.Contains(r, err.Error(), "404 (Config entry not found")
-
-					// terminating-gateway
-					_, _, err = consulClient.ConfigEntries().Get(api.IngressGateway, "terminating-gateway", nil)
 					require.Error(r, err)
 					require.Contains(r, err.Error(), "404 (Config entry not found")
 				})
