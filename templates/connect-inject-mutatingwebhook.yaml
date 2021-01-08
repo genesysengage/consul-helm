@@ -16,7 +16,13 @@ metadata:
     release: {{ .Release.Name }}
 webhooks:
   - name: {{ template "consul.fullname" . }}-connect-injector.consul.hashicorp.com
+    objectSelector:
+      matchExpressions:
+      - key: component
+        operator: NotIn
+        values: ["connect-injector"]
     failurePolicy: Ignore
+#    failurePolicy: Fail
     sideEffects: None
     admissionReviewVersions:
       - "v1beta1"
